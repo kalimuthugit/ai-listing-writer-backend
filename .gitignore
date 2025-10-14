@@ -1,0 +1,35 @@
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.env/
+venv/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment variables and secrets
+.env
+
+# VS Code / PyCharm settings
+.vscode/
+.idea/
+
+# Mac / Windows OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Build artifacts and test files
+build/
+dist/
+*.egg-info/
+
+# Temporary files
+*.tmp
+*.bak
