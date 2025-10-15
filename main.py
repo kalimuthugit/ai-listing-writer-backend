@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, PlainTextResponse
 from pydantic import BaseModel
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
@@ -10,35 +10,29 @@ import asyncio
 # Load environment variables
 load_dotenv()
 
-# Initialize OpenAI client (async version for streaming)
 client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-# Initialize FastAPI
 app = FastAPI()
 
-# Allow frontend access
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # You can restrict this to your frontend domain later
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Define request model
 class ListingRequest(BaseModel):
     property_type: str
     bedrooms: int
     bathrooms: int
     features: str
-    temperature: float = 0.3  # Default lower value for factual tone
+    temperature: float = 0.3
 
-# ---------------------------
-# 🚀 STREAMING GENERATION ENDPOINT
-# ---------------------------
+# Detect if running on Render (Render sets a specific env var)
+IS_RENDER = os.getenv("RENDER") is not None
+
 @app.post("/generate-listing")
 async def generate_listing(req: ListingRequest):
-    # Build the factual prompt
     prompt = (
         f"Write a factual and descriptive real estate listing for a "
         f"{req.bedrooms}-bedroom, {req.bathrooms}-bathroom {req.property_type}. "
@@ -46,8 +40,29 @@ async def generate_listing(req: ListingRequest):
         f"List features factually: {req.features}."
     )
 
+    # ✅ If running on Render → non-streaming mode (fixes "no content" issue)
+    if IS_RENDER:
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are an assistant that writes real estate listings. "
+                        "Keep writing factual, neutral, and descriptive. "
+                        "Avoid exaggerated or invented details."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            temperature=min(max(req.temperature, 0.0), 0.5),
+        )
+
+        content = response.choices[0].message.content.strip()
+        return PlainTextResponse(content)
+
+    # ✅ Otherwise, use streaming locally
     async def stream_response():
-        # Use streaming to send chunks to frontend as they are generated
         stream = await client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -55,13 +70,13 @@ async def generate_listing(req: ListingRequest):
                     "role": "system",
                     "content": (
                         "You are an assistant that writes real estate listings. "
-                        "Keep the writing factual, neutral, and descriptive. "
-                        "Avoid creative or exaggerated language, and do not invent details."
+                        "Keep writing factual, neutral, and descriptive. "
+                        "Avoid exaggerated or invented details."
                     ),
                 },
                 {"role": "user", "content": prompt},
             ],
-            temperature=min(max(req.temperature, 0.0), 0.5),  # Clamp between 0.0–0.5
+            temperature=min(max(req.temperature, 0.0), 0.5),
             stream=True,
         )
 
@@ -69,13 +84,11 @@ async def generate_listing(req: ListingRequest):
             content = chunk.choices[0].delta.get("content", "")
             if content:
                 yield content
-            await asyncio.sleep(0)  # let the event loop breathe
+            await asyncio.sleep(0)
 
     return StreamingResponse(stream_response(), media_type="text/plain")
 
-# ---------------------------
-# HEALTH CHECK ENDPOINT
-# ---------------------------
+
 @app.get("/")
 async def root():
     return {"message": "AI Listing Writer backend is running!"}
